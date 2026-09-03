@@ -140,19 +140,86 @@ class Grammar:
 
     def first_of_sequence(self, symbols: tuple[str, ...]) -> set[str]:
         """Calcule FIRST para uma sequência de zero ou mais símbolos."""
-        raise NotImplementedError("implemente FIRST de uma sequência")
+        resultado = set()
+        verificarVazio = True # para verificar se os simbolos podem produzir EPSILON
+
+        for sym in symbols:
+            if sym in self.nonterminals:
+                first_sym = self.first.get(sym, set()) # pega o first do naoterminal
+                resultado.update(first_sym - {EPSILON}) # adicionar o first sem o EPSILON
+                if EPSILON not in first_sym: # caso nao produza EPSILON
+                    verificarVazio = False 
+                    break
+            else:  # simbolo terminal
+                resultado.add(sym) # adiciona o terminal no first
+                verificarVazio = False
+                break
+        else:
+            # se for vazio, adiciona vazio
+            if verificarVazio:
+                resultado.add(EPSILON)
+
+        return resultado
 
     def build_first(self) -> None:
         """Preencha self.first por iteração até um ponto fixo."""
-        raise NotImplementedError("implemente FIRST")
+        self.first = self._empty_sets_by_nonterminal()
+        atualizou = True # condicao para sair do loop, quando nao tiver mudanca FALSE
+
+        while atualizou:
+            atualizou = False
+            for production in self.productions:
+                first_rhs = self.first_of_sequence(production.rhs)
+                tamanho = len(self.first[production.lhs]) # guarda o tamanho para ver se ele ira aumentar
+                self.first[production.lhs].update(first_rhs) # atualiza o RHS do LHS relacionado
+                if len(self.first[production.lhs]) != tamanho:
+                    atualizou = True # caso tenha atualizado, repete até obter todos os first
 
     def build_follow(self) -> None:
         """Preencha self.follow; FIRST deve ter sido calculado antes."""
-        raise NotImplementedError("implemente FOLLOW")
+        if set(self.first) != set(self.nonterminals):
+            raise RuntimeError("calcule FIRST antes de FOLLOW")
 
+        self.follow = self._empty_sets_by_nonterminal()
+        self.follow[self.start_symbol].add(EOF) # comecando com EOF
+        atualizou = True # condicao para sair do loop, quando nao tiver mudanca FALSE
+
+        while atualizou:
+            atualizou = False
+            for production in self.productions:
+                trailer = set(self.follow[production.lhs]) # inicia o trailer com o follow do lado esquerdo
+
+                for symbol in reversed(production.rhs): # para calcular a parte direita, da direita para a esquerda
+                    if symbol in self.nonterminals:
+                        tamanho = len(self.follow[symbol]) # guarda o tamanho do follow do simbolo para ver se ele ira aumentar
+                        self.follow[symbol].update(trailer) # atualiza o follow do simbolo com a informaçao do trailer
+                        if len(self.follow[symbol]) != tamanho:
+                            atualizou = True
+
+                        symbol_first = self.first[symbol] # verifica o first do simbolo
+                        if EPSILON in symbol_first: 
+                            trailer = trailer | (symbol_first - {EPSILON}) # quando produz EPSILON, mantem o trailer e adiciona o first do simbolo
+                        else:
+                            trailer = symbol_first - {EPSILON} # quando nao produz EPSILON, carrega novo trailer sem EPSILON
+                    else:
+                        trailer = {symbol} # quando terminal, o trailer apaga e recebe somente o simbolo
+                        
     def build_start(self) -> None:
         """Associe a cada produção seu conjunto START."""
-        raise NotImplementedError("implemente START")
+        if set(self.first) != set(self.nonterminals):
+            raise RuntimeError("calcule FIRST antes de START")
+        if set(self.follow) != set(self.nonterminals):
+            raise RuntimeError("calcule FOLLOW antes de START")
+
+        self.start = {}
+
+        for production in self.productions:
+            first_rhs = self.first_of_sequence(production.rhs) # recebe os first da producao gramatical
+            if EPSILON in first_rhs:
+                start_set = (first_rhs - {EPSILON}) | self.follow[production.lhs] # caso tenha EPSILON no first, adicionar o follow da parte esquerda
+            else:
+                start_set = first_rhs # senao adiciona somente o first
+            self.start[production] = start_set
 
     def build_sets(self) -> None:
         self.build_first()
@@ -161,7 +228,36 @@ class Grammar:
 
     def eliminate_direct_left_recursion(self, nonterminal: str) -> bool:
         """Elimine a recursão direta de um não terminal, se existir."""
-        raise NotImplementedError("implemente a remoção de recursão direta")
+        productions = self.productions_for(nonterminal)
+
+        # cria duas listas tupla, uma para as entradas recursivas e outra para entradas nao recursivas
+        recursivo: list[tuple[str, ...]] = []
+        nao_recursivo: list[tuple[str, ...]] = []
+
+        # acumula o alpha e o beta: A -> A alpha | beta
+        for prod in productions:
+            if prod.rhs and prod.rhs[0] == nonterminal: # verifica se o rhs está vazio e se o primeiro é naoterminal
+                recursivo.append(prod.rhs[1:])  # alpha a partir do 1, porque 0 naoterminal
+            else:
+                nao_recursivo.append(prod.rhs)   # beta
+
+        # nao tem recursao, sai
+        if not recursivo:
+            return False
+
+        linha = self._fresh_nonterminal(nonterminal) # cria o naoterminal A', se já existir tenta adicionar ' no final
+        self._insert_nonterminal_after(nonterminal, linha) # adiciona o A' na gramatica apos o A
+
+        # A -> beta A'
+        atualizacao = [beta + (linha,) for beta in nao_recursivo]
+        self._replace_productions(nonterminal, atualizacao)
+
+        # A' -> alpha A' | EPSILON
+        novaProducao = [alpha + (linha,) for alpha in recursivo]
+        novaProducao.append(()) # EPSILON no fim
+        self._replace_productions(linha, novaProducao)
+
+        return True
 
     def eliminate_all_direct_left_recursion(self) -> None:
         for nonterminal in list(self.nonterminals):
