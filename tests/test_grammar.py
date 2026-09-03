@@ -42,8 +42,8 @@ def test_first_percorre_sequencias_anulaveis_ate_o_ponto_fixo():
     grammar.build_first()
     assert grammar.first["S"] == {"c", "b", EPSILON}
     assert grammar.first["A"] == {"c", EPSILON}
-    assert grammar.first_of_sequence(("A", "B", "fim")) == {
-        "c", "b", "fim"
+    assert grammar.first_of_sequence(("A", "B")) == {
+        "c", "b", EPSILON
     }
 
 
